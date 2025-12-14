@@ -1,16 +1,19 @@
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, write::EncoderWriter};
 use clap::{CommandFactory, Parser};
-use std::io::{self, IsTerminal, Read, Write};
+use std::{
+    io::{self, IsTerminal, Read, Write},
+    path::PathBuf,
+};
 
 /// Copy to clipboard using ANSI OSC52 sequence
 #[derive(Parser)]
 struct Args {
     /// File to read (stdin unless TTY by default)
-    filename: Option<String>,
+    filename: Option<PathBuf>,
 }
 
-fn copy_osc52<R: Read, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
+fn copy_osc52<R: Read, W: Write>(mut input: R, mut output: W) -> Result<()> {
     write!(output, "\x1b]52;c;")?;
 
     {
