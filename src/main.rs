@@ -1,44 +1,27 @@
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, write::EncoderWriter};
 use clap::{CommandFactory, Parser};
 use std::io::{self, IsTerminal, Read, Write};
-
-macro_rules! OSC52 {
-    () => {
-        "\x1b]52;c;{}\x07"
-    };
-}
 
 /// Copy to clipboard using ANSI OSC52 sequence
 #[derive(Parser)]
 struct Args {
     /// File to read (stdin unless TTY by default)
     filename: Option<String>,
-
-    /// Don't echo the copied content
-    #[arg(short, long)]
-    silent: bool,
-
-    /// Remove the trailing newline (LF) if present
-    #[arg(short = 'n', long)]
-    strip_newline: bool,
 }
 
-fn read(args: &Args) -> Result<Vec<u8>> {
-    let mut buf = match &args.filename {
-        Some(path) => std::fs::read(path)?,
-        None => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            buf
-        }
-    };
+fn copy_osc52<R: Read, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
+    write!(output, "\x1b]52;c;")?;
 
-    if args.strip_newline && buf.last() == Some(&b'\n') {
-        buf.pop();
+    {
+        let mut encoder = EncoderWriter::new(&mut output, &STANDARD);
+        io::copy(&mut input, &mut encoder)?;
+        encoder.finish()?;
     }
 
-    Ok(buf)
+    write!(output, "\x07")?;
+    output.flush()?;
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -49,16 +32,15 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let text = read(&args)?;
-    let blob = STANDARD.encode(&text);
+    let stdout = io::stdout();
+    let stdin = io::stdin();
 
-    let mut stdout = io::stdout();
-    write!(stdout, OSC52!(), blob)?;
-    stdout.flush()?;
-
-    if !args.silent {
-        println!("{:?}", std::str::from_utf8(&text)?);
-    }
+    if let Some(path) = &args.filename {
+        let file = std::fs::File::open(path)?;
+        copy_osc52(file, stdout.lock())?;
+    } else {
+        copy_osc52(stdin.lock(), stdout.lock())?;
+    };
 
     Ok(())
 }
