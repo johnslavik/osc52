@@ -40,7 +40,7 @@ fn main() -> Result<()> {
         copy_osc52(file, stdout.lock())?;
     } else {
         copy_osc52(stdin.lock(), stdout.lock())?;
-    };
+    }
 
     Ok(())
 }
