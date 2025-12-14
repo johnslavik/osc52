@@ -1,54 +1,64 @@
+use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::{CommandFactory, Parser};
-use std::io::{IsTerminal, Read, Write};
-use std::str::from_utf8;
+use std::io::{self, IsTerminal, Read, Write};
 
-use base64::engine::general_purpose as base64_engines;
-use base64::Engine;
-
-#[derive(Parser)]
-/// Copy to clipboard using ANSI OSC52 sequence
-struct Args {
-    /// File to read from; if not provided, stdin is read
-    filename: Option<String>,
-    #[arg(short, long, default_value_t = false)]
-    /// Don't echo the copied content
-    silent: bool,
+macro_rules! OSC52 {
+    () => {
+        "\x1b]52;c;{}\x07"
+    };
 }
 
-fn main() -> anyhow::Result<()> {
-    if std::io::stdin().is_terminal() {
-        Args::command().print_help().unwrap_or(());
+/// Copy to clipboard using ANSI OSC52 sequence
+#[derive(Parser)]
+struct Args {
+    /// File to read (stdin unless TTY by default)
+    filename: Option<String>,
+
+    /// Don't echo the copied content
+    #[arg(short, long)]
+    silent: bool,
+
+    /// Remove the trailing newline (LF) if present
+    #[arg(short = 'n', long)]
+    strip_newline: bool,
+}
+
+fn read(args: &Args) -> Result<Vec<u8>> {
+    let mut buf = match &args.filename {
+        Some(path) => std::fs::read(path)?,
+        None => {
+            let mut buf = Vec::new();
+            io::stdin().read_to_end(&mut buf)?;
+            buf
+        }
+    };
+
+    if args.strip_newline && buf.last() == Some(&b'\n') {
+        buf.pop();
+    }
+
+    Ok(buf)
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    if args.filename.is_none() && io::stdin().is_terminal() {
+        Args::command().print_help()?;
         return Ok(());
     }
 
-    let args = Args::parse();
+    let text = read(&args)?;
+    let blob = STANDARD.encode(&text);
 
-    let contents = {
-        match args.filename {
-            Some(filename) if !filename.is_empty() => std::fs::read(filename),
-            _ => {
-                let mut buf = vec![];
-                std::io::stdin().read_to_end(&mut buf)?;
-                Ok(buf)
-            }
-        }
-    }?;
-
-    let mut encoded_buf =
-        vec![0u8; base64::encoded_len(contents.len(), true).expect("input too large")];
-
-    let written = base64_engines::STANDARD
-        .encode_slice(&contents, &mut encoded_buf)
-        .expect("buffer overflow");
-
-    {
-        let mut stdout = std::io::stdout();
-        stdout.write(&[b"\x1b]52;c;", &encoded_buf[..written], b"\x07"].concat())?;
-        stdout.flush()?;
-    }
+    let mut stdout = io::stdout();
+    write!(stdout, OSC52!(), blob)?;
+    stdout.flush()?;
 
     if !args.silent {
-        println!("Copied: {:?}", from_utf8(&contents)?)
+        println!("{:?}", std::str::from_utf8(&text)?);
     }
+
     Ok(())
 }
